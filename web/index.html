@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Cosmo · the AGENT demo agent</title>
+<style>
+  :root{
+    --bg:#070907; --bg2:#0d110d; --fg:#d8e8d0; --dim:#7a8b75;
+    --green:#5cf08c; --green-dim:#2c7a44; --amber:#ffb347; --rule:#1a221a;
+    --mono:"JetBrains Mono","Fira Code","SFMono-Regular",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--mono);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  body{
+    background:radial-gradient(900px 500px at 80% -10%, rgba(92,240,140,0.05), transparent 60%), var(--bg);
+    min-height:100vh;
+  }
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(255,255,255,0.018) 0 1px, transparent 1px 3px);
+    mix-blend-mode:overlay;z-index:1}
+  .wrap{max-width:840px;margin:0 auto;padding:32px 24px}
+  header{display:flex;justify-content:space-between;align-items:center;padding-bottom:20px;border-bottom:1px solid var(--rule);margin-bottom:28px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:0.16em}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 12px var(--green);animation:pulse 1.6s ease-in-out infinite}
+  .brand .ticker{color:var(--dim);font-weight:500;letter-spacing:0.12em}
+  .meta{color:var(--dim);font-size:12px;letter-spacing:0.16em}
+  h1{font-size:28px;margin:0 0 8px;letter-spacing:-0.005em}
+  .lede{color:var(--dim);margin:0 0 24px;max-width:640px}
+  .lede strong{color:var(--green);font-weight:500}
+  form{display:flex;gap:8px;margin-bottom:24px}
+  input{flex:1;background:#000;border:1px solid var(--rule);color:var(--fg);font-family:var(--mono);font-size:14px;padding:12px 14px;border-radius:2px;outline:none;transition:border-color .15s}
+  input:focus{border-color:var(--green)}
+  button{background:var(--green);color:#000;border:none;font-family:var(--mono);font-size:13px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;padding:0 22px;cursor:pointer;border-radius:2px}
+  button:hover{box-shadow:0 0 24px rgba(92,240,140,0.4)}
+  button:disabled{opacity:0.5;cursor:wait}
+  .examples{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:32px}
+  .ex{background:var(--bg2);border:1px solid var(--rule);color:var(--dim);padding:6px 10px;font-size:12px;border-radius:2px;cursor:pointer;transition:all .15s}
+  .ex:hover{border-color:var(--green);color:var(--fg)}
+  .transcript{display:flex;flex-direction:column;gap:14px}
+  .turn{background:var(--bg2);border:1px solid var(--rule);border-radius:4px;padding:14px 16px;animation:fadeIn .25s ease-out}
+  .turn .you{color:var(--amber);font-size:12px;letter-spacing:0.16em;margin-bottom:6px}
+  .turn .me{color:var(--green);font-size:12px;letter-spacing:0.16em;margin-bottom:6px}
+  .turn .body{color:var(--fg);white-space:pre-wrap;font-size:14px}
+  .step{color:var(--dim);font-size:12px;border-left:2px solid var(--rule);padding:4px 12px;margin:4px 0}
+  .step.green{border-left-color:var(--green);color:var(--fg)}
+  .step.amber{border-left-color:var(--amber)}
+  .receipt{background:#000;border:1px solid var(--green-dim);border-radius:2px;padding:8px 12px;margin-top:8px;font-size:12px;color:var(--fg)}
+  .receipt a{color:var(--green);text-decoration:none}
+  .receipt a:hover{color:#fff;text-decoration:underline}
+  .empty{text-align:center;color:var(--dim);padding:40px 0;font-size:13px}
+  .health{margin-top:36px;padding:14px;background:var(--bg2);border:1px solid var(--rule);border-radius:4px;font-size:12px;color:var(--dim)}
+  .health-row{display:flex;justify-content:space-between;padding:3px 0}
+  .health-row span:last-child{color:var(--fg)}
+  @keyframes pulse{50%{opacity:0.4;transform:scale(0.85)}}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><span class="dot"></span>COSMO <span class="ticker">// the agent demo</span></div>
+    <div class="meta" id="cluster-tag">devnet</div>
+  </header>
+
+  <h1>I am an agent.</h1>
+  <p class="lede">
+    Ask me a question. I will pick an API, <strong>pay SOL on-chain</strong> for the call, fetch the answer, and show you the receipt.
+    No subscriptions. No accounts. Just an agent and its keys.
+  </p>
+
+  <form id="ask-form">
+    <input id="prompt" type="text" placeholder="what's the weather like for an autonomous launch?" autocomplete="off" required />
+    <button type="submit" id="go">ASK &gt;</button>
+  </form>
+
+  <div class="examples">
+    <span class="ex" data-q="what's the price of SOL right now">price of SOL</span>
+    <span class="ex" data-q="what's the latest agent-economy news">agent news</span>
+    <span class="ex" data-q="forecast for autonomous activity today">weather check</span>
+  </div>
+
+  <div class="transcript" id="transcript">
+    <div class="empty" id="empty">// transcript empty. ask a question above.</div>
+  </div>
+
+  <div class="health" id="health">
+    <div class="health-row"><span>// cosmo</span><span id="h-pk">--</span></div>
+    <div class="health-row"><span>balance</span><span id="h-bal">--</span></div>
+    <div class="health-row"><span>per-call cost</span><span id="h-cost">--</span></div>
+    <div class="health-row"><span>cluster</span><span id="h-cluster">--</span></div>
+  </div>
+</div>
+
+<script>
+async function loadHealth(){
+  try{
+    const r = await fetch('/api/health'); const h = await r.json();
+    if(!h.ok) return;
+    document.getElementById('h-pk').textContent = h.cosmo.slice(0,8) + '…' + h.cosmo.slice(-4);
+    document.getElementById('h-bal').textContent = (h.balance_sol||0).toFixed(4) + ' SOL';
+    document.getElementById('h-cost').textContent = (h.payment_lamports/1e9) + ' SOL / call';
+    document.getElementById('h-cluster').textContent = h.cluster;
+    document.getElementById('cluster-tag').textContent = h.cluster;
+  }catch(e){}
+}
+loadHealth();
+
+document.querySelectorAll('.ex').forEach(el => {
+  el.addEventListener('click', () => {
+    document.getElementById('prompt').value = el.dataset.q;
+    document.getElementById('ask-form').dispatchEvent(new Event('submit'));
+  });
+});
+
+const f = document.getElementById('ask-form');
+f.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const promptEl = document.getElementById('prompt');
+  const prompt = promptEl.value.trim();
+  if (!prompt) return;
+  const btn = document.getElementById('go');
+  btn.disabled = true;
+  btn.textContent = 'WORKING...';
+  document.getElementById('empty')?.remove();
+
+  const t = document.getElementById('transcript');
+  const turn = document.createElement('div');
+  turn.className = 'turn';
+  turn.innerHTML = '<div class="you">// you</div><div class="body">' + escapeHtml(prompt) + '</div>';
+  t.prepend(turn);
+
+  const me = document.createElement('div');
+  me.className = 'turn';
+  me.innerHTML = '<div class="me">// cosmo</div><div class="body">thinking...</div>';
+  t.prepend(me);
+
+  try {
+    const r = await fetch('/api/ask', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
+    const data = await r.json();
+    me.innerHTML = renderResult(data);
+    loadHealth();
+  } catch (err) {
+    me.innerHTML = '<div class="me">// cosmo</div><div class="body" style="color:#ff5c8a">error: ' + escapeHtml(err.message) + '</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'ASK >';
+    promptEl.value = '';
+  }
+});
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function renderResult(d){
+  if(!d.ok){
+    return '<div class="me">// cosmo</div><div class="body" style="color:#ff5c8a">' + escapeHtml(d.error || 'unknown error') + '</div>';
+  }
+  let html = '<div class="me">// cosmo</div>';
+  html += '<div class="step amber">[plan] route to ' + escapeHtml(d.plan.label) + '</div>';
+  html += '<div class="step">[402] payment required: ' + (d.receipt.lamports/1e9) + ' SOL</div>';
+  html += '<div class="step green">[paid] tx confirmed</div>';
+  html += '<div class="receipt">payment ⟶ <a href="' + d.receipt.link + '" target="_blank" rel="noopener">' + d.receipt.sig.slice(0,16) + '…</a></div>';
+  const a = d.answer || {};
+  let body = '';
+  if (a.forecast) body = a.forecast;
+  else if (a.price) body = Object.entries(a.price).map(([k,v]) => k + ': $' + v).join('  ·  ');
+  else if (a.headlines) body = a.headlines.map(h => '· ' + h).join('\n');
+  else body = JSON.stringify(a, null, 2);
+  html += '<div class="body" style="margin-top:10px">' + escapeHtml(body) + '</div>';
+  return html;
+}
+</script>
+</body>
+</html>
