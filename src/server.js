@@ -27,21 +27,34 @@ app.post('/api/ask', async (req, res) => {
   }
 });
 
+// Healthcheck must ALWAYS return 200 for Railway/Render to mark the service
+// healthy. We attach diagnostic info opportunistically — if the wallet or
+// network call fails, we report it inside the response body but never as
+// a non-2xx status.
 app.get('/api/health', async (_req, res) => {
+  const out = {
+    ok: true,
+    service: 'cosmo',
+    cluster: process.env.SOLANA_CLUSTER || 'devnet',
+    mock_mode: process.env.MOCK_MODE === '1' || process.env.MOCK_MODE === 'true',
+    recipient: process.env.PAYMENT_RECIPIENT || null,
+    payment_lamports: parseInt(process.env.PAYMENT_LAMPORTS || '1000000', 10),
+    wallet: null,
+    balance_sol: null,
+    warnings: [],
+  };
   try {
     const kp = getCosmoKeypair();
-    const balance = await getBalance(kp.publicKey);
-    res.json({
-      ok: true,
-      cluster: process.env.SOLANA_CLUSTER || 'devnet',
-      cosmo: kp.publicKey.toString(),
-      balance_sol: balance,
-      recipient: process.env.PAYMENT_RECIPIENT,
-      payment_lamports: parseInt(process.env.PAYMENT_LAMPORTS || '1000000', 10),
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    out.wallet = kp.publicKey.toString();
+    try {
+      out.balance_sol = await getBalance(kp.publicKey);
+    } catch (balErr) {
+      out.warnings.push(`balance_lookup_failed: ${balErr.message}`);
+    }
+  } catch (kpErr) {
+    out.warnings.push(`wallet_unavailable: ${kpErr.message}`);
   }
+  res.status(200).json(out);
 });
 
 const port = process.env.PORT || 4019;
