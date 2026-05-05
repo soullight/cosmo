@@ -2,7 +2,7 @@
   "name": "cosmo",
   "version": "0.0.1",
   "private": true,
-  "description": "Cosmo — the demo agent for AGENT. Pays SOL for the API calls it needs.",
+  "description": "Cosmo \u2014 the demo agent for AGENT. Pays SOL for the API calls it needs.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -13,7 +13,8 @@
     "@solana/web3.js": "^1.95.4",
     "bs58": "^5.0.0",
     "dotenv": "^16.4.5",
-    "express": "^4.21.1"
+    "express": "^4.21.1",
+    "@solana/spl-token": "^0.4.14"
   },
   "engines": {
     "node": ">=18.0.0"

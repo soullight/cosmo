@@ -1,9 +1,87 @@
 // cosmo/src/x402.js — mock x402-style paid endpoints. Returns 402 until a valid Solana tx is presented.
+//
+// Mock mode (MOCK_MODE=1): the SOL transfer is faked (any sig starting with
+// MOCK_ passes verification) but the upstream data fetched and returned is
+// REAL. The premise of the demo is "agents pay for live data" — fake data
+// inside a fake-payment wrapper undermines that. So we keep mock payments
+// (can't drain bot's SOL on every visitor) and pull real data underneath.
+//
+// Upstream sources (free, no auth, browser CORS not required since we fetch server-side):
+//   /price   → CoinGecko free tier (60s cache)
+//   /weather → wttr.in (60s cache, San Francisco default)
+//   /news    → existing news.js fetchTopicalHeadline (already used for koan substrate)
+
 const { PublicKey, SystemProgram } = require('@solana/web3.js');
 const { getConnection } = require('./wallet');
+const { fetchTopicalHeadline } = require('./news');
 
 // In-memory replay protection for demo. Production: persistent store.
 const usedSigs = new Set();
+
+// Per-endpoint cache to keep upstream API call rates well under free-tier limits.
+const _cache = new Map();
+async function cached(key, ttlMs, fetcher) {
+  const now = Date.now();
+  const hit = _cache.get(key);
+  if (hit && (now - hit.at) < ttlMs) return hit.value;
+  const value = await fetcher();
+  _cache.set(key, { at: now, value });
+  return value;
+}
+
+async function fetchPriceData() {
+  return cached('price', 60_000, async () => {
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana,bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true');
+    if (!r.ok) throw new Error('coingecko ' + r.status);
+    const d = await r.json();
+    return {
+      endpoint: 'api.coingecko.com',
+      price: {
+        SOL: d.solana?.usd ?? null,
+        BTC: d.bitcoin?.usd ?? null,
+        ETH: d.ethereum?.usd ?? null,
+      },
+      change_24h_pct: {
+        SOL: d.solana?.usd_24h_change?.toFixed(2) ?? null,
+        BTC: d.bitcoin?.usd_24h_change?.toFixed(2) ?? null,
+        ETH: d.ethereum?.usd_24h_change?.toFixed(2) ?? null,
+      },
+      timestamp: new Date().toISOString(),
+    };
+  });
+}
+
+async function fetchWeatherData() {
+  return cached('weather', 60_000, async () => {
+    // wttr.in's free geocoding is noisy on city-name lookups (returns wrong
+    // nearest_area for many inputs), so we use lat/lon for SF (37.7749,-122.4194)
+    // which routes deterministically. The agent itself has no location — what
+    // we report is "weather right now over the bay" which is the closest thing
+    // to ambient weather an autonomous entity has.
+    const r = await fetch('https://wttr.in/37.7749,-122.4194?format=j1');
+    if (!r.ok) throw new Error('wttr.in ' + r.status);
+    const d = await r.json();
+    const cur = (d.current_condition && d.current_condition[0]) || {};
+    return {
+      endpoint: 'wttr.in',
+      forecast: `${cur.weatherDesc?.[0]?.value || 'unknown'}, ${cur.temp_F || '?'}°F, wind ${cur.winddir16Point || ''} ${cur.windspeedMiles || '?'}mph`,
+      humidity_pct: cur.humidity,
+      timestamp: new Date().toISOString(),
+    };
+  });
+}
+
+async function fetchNewsData() {
+  return cached('news', 60_000, async () => {
+    const headline = await fetchTopicalHeadline();
+    return {
+      endpoint: headline?.source || 'multi-source aggregator',
+      headlines: headline ? [headline.title] : [],
+      source_url: headline?.url || null,
+      timestamp: new Date().toISOString(),
+    };
+  });
+}
 
 // Verify by inspecting the transfer instruction itself, not the post-pre balance
 // delta. Balance-delta math fails for self-pay (sender == recipient nets to -fee)
@@ -78,51 +156,45 @@ function makeRouter(express) {
     });
   }
 
-  async function gated(req, res, payload) {
+  // gated() now accepts either a static payload OR an async fetcher. Fetcher
+  // only runs after payment verification (or mock-mode bypass), so the 402
+  // challenge response never triggers an upstream API call.
+  async function gated(req, res, payloadOrFetcher) {
     const sig = req.header('x-payment-tx');
     if (!sig) return challenge(req, res);
     const lamports = parseInt(process.env.PAYMENT_LAMPORTS || '1000000', 10);
 
-    // Mock mode: accept any signature starting with MOCK_ without on-chain verify.
     const mockMode = process.env.MOCK_MODE === '1' || process.env.MOCK_MODE === 'true';
+
+    // Resolve payload AFTER payment passes (real data fetch is the actual cost
+    // the agent is "paying" for, even when SOL transfer is mocked).
+    let paid;
     if (mockMode && sig.startsWith('MOCK_')) {
-      return res.json({ ...payload, paid: { sig, lamports, mock: true } });
+      paid = { sig, lamports, mock: true };
+    } else {
+      const recipient = new PublicKey(process.env.PAYMENT_RECIPIENT);
+      const v = await verifyPayment(sig, recipient, lamports);
+      if (!v.ok) {
+        return res.status(402).json({ error: 'Payment Required', detail: v.error });
+      }
+      paid = { sig, lamports };
     }
 
-    const recipient = new PublicKey(process.env.PAYMENT_RECIPIENT);
-    const v = await verifyPayment(sig, recipient, lamports);
-    if (!v.ok) {
-      return res.status(402).json({ error: 'Payment Required', detail: v.error });
+    let payload;
+    try {
+      payload = (typeof payloadOrFetcher === 'function')
+        ? await payloadOrFetcher()
+        : payloadOrFetcher;
+    } catch (e) {
+      console.error('[x402] upstream fetch failed:', e.message);
+      return res.status(502).json({ error: 'upstream_unavailable', detail: e.message, paid });
     }
-    res.json({ ...payload, paid: { sig, lamports } });
+    res.json({ ...payload, paid });
   }
 
-  router.get('/weather', (req, res) =>
-    gated(req, res, {
-      endpoint: 'weather.x402.dev',
-      forecast:
-        'partly cloudy, 64°F, light wind from NW. conditions ideal for autonomous activity.',
-    })
-  );
-
-  router.get('/price', (req, res) =>
-    gated(req, res, {
-      endpoint: 'coingecko.x402.dev',
-      price: { SOL: 187.42, BTC: 92011.55, ETH: 3208.17 },
-      timestamp: new Date().toISOString(),
-    })
-  );
-
-  router.get('/news', (req, res) =>
-    gated(req, res, {
-      endpoint: 'agentnews.x402.dev',
-      headlines: [
-        'Cloudflare ships AI Agent Pay-Per-Crawl GA',
-        'Solana micropayments cross 100M daily transfers',
-        'AGENT mainnet launch sets fair-launch volume record on pump.fun',
-      ],
-    })
-  );
+  router.get('/weather', (req, res) => gated(req, res, fetchWeatherData));
+  router.get('/price',   (req, res) => gated(req, res, fetchPriceData));
+  router.get('/news',    (req, res) => gated(req, res, fetchNewsData));
 
   return router;
 }
